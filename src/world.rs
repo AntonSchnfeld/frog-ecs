@@ -181,4 +181,18 @@ mod tests {
         assert!(!world.is_alive(old));
         assert!(world.is_alive(new));
     }
+
+    #[test]
+    fn given_twice_killed_entity_when_create_entity_then_slot_is_properly_recycled() {
+        let mut world = World::new();
+        let old_entity = world.create_entity();
+        assert!(world.is_alive(old_entity));
+        world.kill_entity(old_entity);
+        assert!(!world.is_alive(old_entity));
+        world.kill_entity(old_entity);
+        assert!(!world.is_alive(old_entity));
+        let recycled_entity = world.create_entity();
+        assert_eq!(recycled_entity.generation, old_entity.generation + 1);
+        assert_eq!(recycled_entity.id, old_entity.id);
+    }
 }
