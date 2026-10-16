@@ -8,7 +8,7 @@ impl Entity {
     pub(crate) fn new(id: u32, generation: u32) -> Self {
         Entity {
             id,
-            generation
+            generation,
         }
     }
 }

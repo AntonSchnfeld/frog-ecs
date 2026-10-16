@@ -3,7 +3,7 @@ use crate::entity::Entity;
 pub struct World {
     id_counter: u32,
     generation_table: Vec<u32>,
-    free_ids: Vec<u32>
+    free_ids: Vec<u32>,
 }
 
 impl World {
@@ -11,7 +11,7 @@ impl World {
         World {
             id_counter: 0,
             generation_table: Vec::new(),
-            free_ids: Vec::new()
+            free_ids: Vec::new(),
         }
     }
 
@@ -34,7 +34,7 @@ impl World {
         self.generation_table.push(0);
         Entity {
             id: new_id,
-            generation: 0
+            generation: 0,
         }
     }
 
@@ -56,6 +56,34 @@ impl World {
             return entity.generation == *generation;
         }
         false
+    }
+
+    pub fn add_component<T>(&self, entity: Entity, _component: T) {
+        if !self.is_alive(entity) {
+            return;
+        }
+        todo!()
+    }
+
+    pub fn remove_component<T>(&self, entity: Entity, _component: T) {
+        if !self.is_alive(entity) {
+            return;
+        }
+        todo!()
+    }
+
+    pub fn get_component<T>(&self, entity: Entity) -> Option<T> {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        todo!()
+    }
+
+    pub fn has_component<T>(&self, entity: Entity) -> bool {
+        if !self.is_alive(entity) {
+            return false;
+        }
+        todo!()
     }
 }
 
