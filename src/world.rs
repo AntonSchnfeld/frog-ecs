@@ -1,9 +1,14 @@
+use std::any::{TypeId};
+use std::collections::HashMap;
 use crate::entity::Entity;
+use crate::sparseset::{SparseSet, SparseSetCD};
+use crate::util::AsAny;
 
 pub struct World {
     id_counter: u32,
     generation_table: Vec<u32>,
     free_ids: Vec<u32>,
+    sparse_sets: HashMap<TypeId, Box<dyn SparseSetCD>>,
 }
 
 impl World {
@@ -12,6 +17,7 @@ impl World {
             id_counter: 0,
             generation_table: Vec::new(),
             free_ids: Vec::new(),
+            sparse_sets: HashMap::new(),
         }
     }
 
@@ -47,6 +53,11 @@ impl World {
             // recycle id
             self.free_ids.push(entity.id);
             *generation += 1;
+            for set in self.sparse_sets.values_mut() {
+                if set.has(entity.id) {
+                    set.remove(entity.id);
+                }
+            }
         }
         // index oob
     }
@@ -58,32 +69,50 @@ impl World {
         false
     }
 
-    pub fn add_component<T>(&self, entity: Entity, _component: T) {
+    pub fn add_component<T: 'static>(&mut self, entity: Entity, component: T) {
         if !self.is_alive(entity) {
             return;
         }
-        todo!()
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            self.sparse_sets.insert(type_id, Box::new(SparseSet::<T>::new()));
+        }
+        let temp = self.sparse_sets.get_mut(&type_id).unwrap();
+        let set = temp.as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
+        set.set(entity.id, component);
     }
 
-    pub fn remove_component<T>(&self, entity: Entity, _component: T) {
+    pub fn remove_component<T: 'static>(&mut self, entity: Entity) {
         if !self.is_alive(entity) {
             return;
         }
-        todo!()
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            return;
+        }
+        let set = self.sparse_sets.get_mut(&type_id).unwrap();
+        set.remove(entity.id);
     }
 
-    pub fn get_component<T>(&self, entity: Entity) -> Option<T> {
+    pub fn get_component<T: 'static>(&self, entity: Entity) -> Option<&T> {
         if !self.is_alive(entity) {
             return None;
         }
-        todo!()
+        let type_id = TypeId::of::<T>();
+        let set = self.sparse_sets.get(&type_id)?.as_any().downcast_ref::<SparseSet<T>>().unwrap();
+        set.get(entity.id)
     }
 
-    pub fn has_component<T>(&self, entity: Entity) -> bool {
+    pub fn has_component<T: 'static>(&self, entity: Entity) -> bool {
         if !self.is_alive(entity) {
             return false;
         }
-        todo!()
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            return false;
+        }
+        let set = self.sparse_sets.get(&type_id).unwrap();
+        set.has(entity.id)
     }
 }
 

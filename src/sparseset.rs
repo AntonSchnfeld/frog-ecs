@@ -1,3 +1,5 @@
+use crate::util::AsAny;
+
 // TODO: Think of better names than id_mapper and mapped_id, horrible for rubber ducking
 // TODO: Think of if SparseSet should be pub or pub(crate) or in a util library
 #[derive(Debug)]
@@ -24,20 +26,6 @@ impl<T> SparseSet<T> {
         self.components.get(id as usize)
     }
 
-    pub fn remove(&mut self, id: u32) {
-        if id >= self.id_mapper.len() as u32 {
-            return;
-        }
-        self.id_mapper[id as usize] = u32::MAX;
-    }
-
-    pub fn has(&self, id: u32) -> bool {
-        if let Some(idx) = self.id_mapper.get(id as usize) && *idx != u32::MAX {
-            return true;
-        }
-        false
-    }
-
     pub fn set(&mut self, id: u32, component: T) {
         if let Some(mapped_id) = self.id_mapper.get(id as usize) {
             self.components[*mapped_id as usize] = component;
@@ -49,9 +37,31 @@ impl<T> SparseSet<T> {
     }
 }
 
+pub trait SparseSetCD: AsAny {
+    fn has(&self, id: u32) -> bool;
+    fn remove (&mut self, id: u32);
+}
+
+// TODO: Rename in the future, not intuitive at all
+impl<T: 'static> SparseSetCD for SparseSet<T> {
+    fn has(&self, id: u32) -> bool {
+        if let Some(idx) = self.id_mapper.get(id as usize) && *idx != u32::MAX {
+            return true;
+        }
+        false
+    }
+
+    fn remove(&mut self, id: u32) {
+        if id >= self.id_mapper.len() as u32 {
+            return;
+        }
+        self.id_mapper[id as usize] = u32::MAX;
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::sparseset::SparseSet;
+    use crate::sparseset::{SparseSet, SparseSetCD};
 
     #[derive(Debug, Eq, PartialEq)]
     struct EmptyComponent {}
