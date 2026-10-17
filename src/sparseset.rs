@@ -93,4 +93,39 @@ mod test {
         set.set(0, EmptyComponent {});
         assert!(set.has(0));
     }
+
+    #[test]
+    fn given_data_at_index_when_get_then_return_data() {
+        let mut set = SparseSet::new();
+        set.set(0, 420);
+        assert!(set.has(0));
+        assert_eq!(*set.get(0).unwrap(), 420);
+    }
+
+    #[test]
+    fn given_out_of_bounds_index_when_get_then_return_none() {
+        let mut set = SparseSet::new();
+        set.set(0, EmptyComponent {});
+        assert!(set.has(0));
+        assert_eq!(set.get(1), None);
+    }
+
+    #[test]
+    fn given_in_bounds_index_with_no_data_when_get_then_return_none() {
+        let mut set = SparseSet::new();
+        set.set(1, EmptyComponent {});
+        assert!(set.has(1));
+        assert_eq!(set.get(0), None);
+    }
+
+    #[test]
+    fn given_previously_used_index_when_get_then_return_none() {
+        let mut set = SparseSet::new();
+        set.set(0, EmptyComponent {});
+        assert!(set.has(0));
+        assert_eq!(*set.get(0).unwrap(), EmptyComponent {});
+        set.remove(0);
+        assert!(!set.has(0));
+        assert_eq!(set.get(0), None);
+    }
 }
