@@ -27,7 +27,7 @@ impl<T> SparseSet<T> {
     }
 
     pub fn set(&mut self, id: u32, component: T) {
-        if let Some(mapped_id) = self.id_mapper.get(id as usize) {
+        if let Some(mapped_id) = self.id_mapper.get(id as usize) && *mapped_id != u32::MAX {
             self.components[*mapped_id as usize] = component;
             return;
         }
@@ -137,5 +137,18 @@ mod test {
         set.remove(0);
         assert!(!set.has(0));
         assert_eq!(set.get(0), None);
+    }
+
+    #[test]
+    fn given_reused_index_when_get_then_return_data() {
+        let mut set = SparseSet::new();
+        set.set(0, EmptyComponent {});
+        assert!(set.has(0));
+        set.remove(0);
+        assert!(!set.has(0));
+        assert!(set.get(0).is_none());
+        set.set(0, EmptyComponent {});
+        assert!(set.has(0));
+        assert_eq!(*set.get(0).unwrap(), EmptyComponent {});
     }
 }
