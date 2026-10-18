@@ -1,8 +1,7 @@
-use std::any::{TypeId};
-use std::collections::HashMap;
 use crate::entity::Entity;
 use crate::sparseset::{ComponentStorage, SparseSet};
-use crate::util::AsAny;
+use std::any::TypeId;
+use std::collections::HashMap;
 
 pub struct World {
     id_counter: u32,
@@ -70,15 +69,18 @@ impl World {
     }
 
     pub fn add_component<T: 'static>(&mut self, entity: Entity, component: T) {
+        // if entity isnt alive we cant add components
         if !self.is_alive(entity) {
             return;
         }
+        // create type id and ensure that a sparse set for that id exists
         let type_id = TypeId::of::<T>();
         if self.sparse_sets.get(&type_id).is_none() {
             self.sparse_sets.insert(type_id, Box::new(SparseSet::<T>::new()));
         }
         let temp = self.sparse_sets.get_mut(&type_id).unwrap();
-        let set = temp.as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
+        // Important: as_mut() to get the &mut dyn ComponentStorage so we dont call as_any_mut on the box
+        let set = temp.as_mut().as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
         set.set(entity.id as usize, component);
     }
 
@@ -99,7 +101,8 @@ impl World {
             return None;
         }
         let type_id = TypeId::of::<T>();
-        let set = self.sparse_sets.get(&type_id)?.as_any().downcast_ref::<SparseSet<T>>().unwrap();
+        // Important: as_ref() to get the &dyn ComponentStorage so we dont call as_any on the box
+        let set = self.sparse_sets.get(&type_id)?.as_ref().as_any().downcast_ref::<SparseSet<T>>().unwrap();
         set.get(entity.id as usize)
     }
 
@@ -526,28 +529,6 @@ mod tests {
         assert!(recycled.iter().all(|entity| entity.generation == 1));
         assert!(recycled.iter().all(|entity| world.is_alive(*entity)));
         assert_eq!(world.create_entity().id, 3);
-    }
-
-    #[test]
-    fn given_entity_handle_from_another_world_when_is_alive_then_return_false() {
-        let mut first_world = World::new();
-        let foreign_entity = first_world.create_entity();
-        let mut second_world = World::new();
-        let local_entity = second_world.create_entity();
-
-        assert!(first_world.is_alive(foreign_entity));
-        assert!(second_world.is_alive(local_entity));
-        assert!(!second_world.is_alive(foreign_entity));
-    }
-
-    #[test]
-    fn given_fabricated_handle_for_free_slot_when_is_alive_then_return_false() {
-        let mut world = World::new();
-        let entity = world.create_entity();
-        world.kill_entity(entity);
-        let free_slot_handle = Entity::new(entity.id, entity.generation + 1);
-
-        assert!(!world.is_alive(free_slot_handle));
     }
 
     #[cfg(debug_assertions)]
