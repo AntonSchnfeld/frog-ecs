@@ -27,11 +27,20 @@ impl<T> SparseSet<T> {
     }
 
     pub fn set(&mut self, id: usize, component: T) {
-        if let Some(mapped_id) = self.sparse.get(id) && *mapped_id != usize::MAX {
-            self.dense[*mapped_id] = component;
-            return;
+        if let Some(mapped_id) = self.sparse.get(id) {
+            // idx exists already, no need to resize
+            if *mapped_id != usize::MAX {
+                // we write since theres already a dense slot allocated
+                self.dense[*mapped_id] = component;
+                return;
+            }
+        } else {
+            // we need to resize since the idx doesnt exist
+            self.sparse.resize(id + 1, usize::MAX);
         }
-        self.sparse.resize(id + 1, usize::MAX);
+        // We know that
+        // a) the sparse array supports at least id + 1 elements
+        // b) the idx at id is NOT currently mapped
         self.dense.push(component);
         self.sparse[id] = self.dense.len() - 1;
     }
@@ -51,14 +60,19 @@ impl<T: 'static> ComponentStorage for SparseSet<T> {
     }
 
     fn remove(&mut self, id: usize) {
+        // dont gotta do anything if theres nothing to be done
         if !self.contains(id) {
             return;
         }
+        // where is the dense value at
         let dense_idx = self.sparse[id];
+        // mark sparse spot as empty
         self.sparse[id] = usize::MAX;
+        // remove actual data, replace empty spot with last element in dense array
         self.dense.swap_remove(dense_idx);
+        // we find the sparse entry for the last dense element and point it towards our repurposed dense spot
         if let Some(swapped_sparse_idx) = self.sparse.iter().position(|x| *x == self.dense.len()) {
-            self.sparse[swapped_sparse_idx] = id;
+            self.sparse[swapped_sparse_idx] = dense_idx;
         }
     }
 }
@@ -291,9 +305,13 @@ mod test {
                 assert_eq!(
                     set.contains(id),
                     model.contains_key(&id),
-                    "contains differed for id {id}"
+                    "contains differed for id {id} | Set: {:?}, Map: {:?}", set, model
                 );
-                assert_eq!(set.get(id), model.get(&id), "get differed for id {id}");
+                assert_eq!(
+                    set.get(id),
+                    model.get(&id),
+                    "get differed for id {id} | Set: {:?}, Map: {:?}", set, model
+                );
             }
         }
     }
