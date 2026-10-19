@@ -18,12 +18,13 @@ impl<T> SparseSet<T> {
     }
 
     pub fn get(&self, id: usize) -> Option<&T> {
-        if id >= self.sparse.len() {
-            return None;
-        }
-        // safe since we bounds checked
-        let id = self.sparse[id];
-        self.dense.get(id)
+        let dense_idx = self.sparse.get(id)?;
+        self.dense.get(*dense_idx)
+    }
+
+    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
+        let dense_idx = self.sparse.get(id)?;
+        self.dense.get_mut(*dense_idx)
     }
 
     pub fn set(&mut self, id: usize, component: T) {

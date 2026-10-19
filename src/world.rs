@@ -2,6 +2,7 @@ use crate::entity::Entity;
 use crate::sparseset::{ComponentStorage, SparseSet};
 use std::any::TypeId;
 use std::collections::HashMap;
+use crate::util::AsAny;
 
 pub struct World {
     id_counter: u32,
@@ -104,6 +105,15 @@ impl World {
         // Important: as_ref() to get the &dyn ComponentStorage so we dont call as_any on the box
         let set = self.sparse_sets.get(&type_id)?.as_ref().as_any().downcast_ref::<SparseSet<T>>().unwrap();
         set.get(entity.id as usize)
+    }
+
+    pub fn get_component_mut<T: 'static>(&mut self, entity: Entity) -> Option<&mut T> {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        let type_id = TypeId::of::<T>();
+        let set = self.sparse_sets.get_mut(&type_id)?.as_mut().as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
+        set.get_mut(entity.id as usize)
     }
 
     pub fn has_component<T: 'static>(&self, entity: Entity) -> bool {
