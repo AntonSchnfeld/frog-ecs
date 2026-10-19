@@ -1,9 +1,13 @@
 use crate::entity::Entity;
+use crate::sparseset::{ComponentStorage, SparseSet};
+use std::any::TypeId;
+use std::collections::HashMap;
 
 pub struct World {
     id_counter: u32,
     generation_table: Vec<u32>,
-    free_ids: Vec<u32>
+    free_ids: Vec<u32>,
+    sparse_sets: HashMap<TypeId, Box<dyn ComponentStorage>>,
 }
 
 impl World {
@@ -11,7 +15,8 @@ impl World {
         World {
             id_counter: 0,
             generation_table: Vec::new(),
-            free_ids: Vec::new()
+            free_ids: Vec::new(),
+            sparse_sets: HashMap::new(),
         }
     }
 
@@ -34,7 +39,7 @@ impl World {
         self.generation_table.push(0);
         Entity {
             id: new_id,
-            generation: 0
+            generation: 0,
         }
     }
 
@@ -47,6 +52,11 @@ impl World {
             // recycle id
             self.free_ids.push(entity.id);
             *generation += 1;
+            for set in self.sparse_sets.values_mut() {
+                if set.contains(entity.id as usize) {
+                    set.remove(entity.id as usize);
+                }
+            }
         }
         // index oob
     }
@@ -57,12 +67,90 @@ impl World {
         }
         false
     }
+
+    pub fn add_component<T: 'static>(&mut self, entity: Entity, component: T) -> bool {
+        // if entity isnt alive we cant add components
+        if !self.is_alive(entity) {
+            return false;
+        }
+        // create type id and ensure that a sparse set for that id exists
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            self.sparse_sets.insert(type_id, Box::new(SparseSet::<T>::new()));
+        }
+        let temp = self.sparse_sets.get_mut(&type_id).unwrap();
+        // Important: as_mut() to get the &mut dyn ComponentStorage so we dont call as_any_mut on the box
+        let set = temp.as_mut().as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
+        set.set(entity.id as usize, component);
+        true
+    }
+
+    pub fn remove_component<T: 'static>(&mut self, entity: Entity) {
+        if !self.is_alive(entity) {
+            return;
+        }
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            return;
+        }
+        let set = self.sparse_sets.get_mut(&type_id).unwrap();
+        set.remove(entity.id as usize);
+    }
+
+    pub fn get_component<T: 'static>(&self, entity: Entity) -> Option<&T> {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        let type_id = TypeId::of::<T>();
+        // Important: as_ref() to get the &dyn ComponentStorage so we dont call as_any on the box
+        let set = self.sparse_sets.get(&type_id)?.as_ref().as_any().downcast_ref::<SparseSet<T>>().unwrap();
+        set.get(entity.id as usize)
+    }
+
+    pub fn get_component_mut<T: 'static>(&mut self, entity: Entity) -> Option<&mut T> {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        let type_id = TypeId::of::<T>();
+        let set = self.sparse_sets.get_mut(&type_id)?.as_mut().as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
+        set.get_mut(entity.id as usize)
+    }
+
+    pub fn has_component<T: 'static>(&self, entity: Entity) -> bool {
+        if !self.is_alive(entity) {
+            return false;
+        }
+        let type_id = TypeId::of::<T>();
+        if self.sparse_sets.get(&type_id).is_none() {
+            return false;
+        }
+        let set = self.sparse_sets.get(&type_id).unwrap();
+        set.contains(entity.id as usize)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::entity::Entity;
     use crate::world::World;
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    use std::rc::Rc;
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct Position(i32);
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct Velocity(i32);
+
+    #[derive(Debug)]
+    struct DropProbe(Rc<Cell<usize>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
 
     #[test]
     fn given_entity_with_out_of_bounds_id_when_is_alive_then_return_false() {
@@ -194,5 +282,415 @@ mod tests {
         let recycled_entity = world.create_entity();
         assert_eq!(recycled_entity.generation, old_entity.generation + 1);
         assert_eq!(recycled_entity.id, old_entity.id);
+    }
+
+    #[test]
+    fn given_alive_entity_when_add_component_then_return_true_and_component_is_available() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+
+        assert!(world.add_component(entity, Position(10)));
+
+        assert!(world.has_component::<Position>(entity));
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
+    }
+
+    #[test]
+    fn given_entity_with_component_when_add_component_then_return_true_and_value_is_replaced() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+
+        assert!(world.add_component(entity, Position(20)));
+
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(20)));
+    }
+
+    #[test]
+    fn given_two_entities_when_add_component_then_return_true_and_same_type_values_are_isolated() {
+        let mut world = World::new();
+        let first = world.create_entity();
+        let second = world.create_entity();
+        let without_component = world.create_entity();
+
+        assert!(world.add_component(first, Position(10)));
+        assert!(world.add_component(second, Position(20)));
+
+        assert_eq!(world.get_component::<Position>(first), Some(&Position(10)));
+        assert_eq!(world.get_component::<Position>(second), Some(&Position(20)));
+        assert!(!world.has_component::<Position>(without_component));
+        assert_eq!(world.get_component::<Position>(without_component), None);
+    }
+
+    #[test]
+    fn given_one_entity_when_add_component_then_return_true_and_multiple_types_are_isolated() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+
+        assert!(world.add_component(entity, Position(10)));
+        assert!(world.add_component(entity, Velocity(20)));
+
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
+        assert_eq!(world.get_component::<Velocity>(entity), Some(&Velocity(20)));
+    }
+
+    #[test]
+    fn given_alive_entity_with_component_when_get_component_mut_then_return_mutable_component() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+
+        let component = world.get_component_mut::<Position>(entity).unwrap();
+        assert_eq!(*component, Position(10));
+        component.0 = 20;
+
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(20)));
+    }
+
+    #[test]
+    fn given_alive_entity_without_component_storage_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+
+        let component = world.get_component_mut::<Position>(entity);
+
+        assert_eq!(component, None);
+        assert!(world.is_alive(entity));
+    }
+
+    #[test]
+    fn given_entity_with_different_component_type_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+
+        let component = world.get_component_mut::<Velocity>(entity);
+
+        assert_eq!(component, None);
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
+    }
+
+    #[test]
+    fn given_component_storage_without_entity_component_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let with_component = world.create_entity();
+        let without_component = world.create_entity();
+        assert!(world.add_component(with_component, Position(10)));
+
+        let component = world.get_component_mut::<Position>(without_component);
+
+        assert_eq!(component, None);
+        assert_eq!(
+            world.get_component::<Position>(with_component),
+            Some(&Position(10))
+        );
+    }
+
+    #[test]
+    fn given_removed_component_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+        world.remove_component::<Position>(entity);
+
+        let component = world.get_component_mut::<Position>(entity);
+
+        assert_eq!(component, None);
+    }
+
+    #[test]
+    fn given_killed_entity_with_component_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+        world.kill_entity(entity);
+
+        let component = world.get_component_mut::<Position>(entity);
+
+        assert_eq!(component, None);
+    }
+
+    #[test]
+    fn given_recycled_entity_without_component_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let old = world.create_entity();
+        assert!(world.add_component(old, Position(10)));
+        world.kill_entity(old);
+        let recycled = world.create_entity();
+
+        let component = world.get_component_mut::<Position>(recycled);
+
+        assert_eq!(component, None);
+    }
+
+    #[test]
+    fn given_old_handle_for_recycled_entity_when_get_component_mut_then_return_none() {
+        let mut world = World::new();
+        let old = world.create_entity();
+        assert!(world.add_component(old, Position(10)));
+        world.kill_entity(old);
+        let recycled = world.create_entity();
+        assert!(world.add_component(recycled, Position(20)));
+
+        let component = world.get_component_mut::<Position>(old);
+
+        assert_eq!(component, None);
+        assert_eq!(world.get_component::<Position>(recycled), Some(&Position(20)));
+    }
+
+    #[test]
+    fn given_two_entities_with_same_component_type_when_get_component_mut_then_mutate_only_target_entity() {
+        let mut world = World::new();
+        let target = world.create_entity();
+        let other = world.create_entity();
+        assert!(world.add_component(target, Position(10)));
+        assert!(world.add_component(other, Position(20)));
+
+        world.get_component_mut::<Position>(target).unwrap().0 = 30;
+
+        assert_eq!(world.get_component::<Position>(target), Some(&Position(30)));
+        assert_eq!(world.get_component::<Position>(other), Some(&Position(20)));
+    }
+
+    #[test]
+    fn given_entity_with_multiple_component_types_when_get_component_mut_then_mutate_only_target_type() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+        assert!(world.add_component(entity, Velocity(20)));
+
+        world.get_component_mut::<Position>(entity).unwrap().0 = 30;
+
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(30)));
+        assert_eq!(world.get_component::<Velocity>(entity), Some(&Velocity(20)));
+    }
+
+    #[test]
+    fn given_entity_with_component_when_remove_component_then_get_and_has_report_absent() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+
+        world.remove_component::<Position>(entity);
+
+        assert!(!world.has_component::<Position>(entity));
+        assert_eq!(world.get_component::<Position>(entity), None);
+    }
+
+    #[test]
+    fn given_live_entity_without_component_storage_when_remove_component_then_operation_is_a_no_op() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+
+        world.remove_component::<Position>(entity);
+
+        assert!(!world.has_component::<Position>(entity));
+        assert_eq!(world.get_component::<Position>(entity), None);
+        assert!(world.is_alive(entity));
+    }
+
+    #[test]
+    fn given_missing_component_type_when_remove_component_then_other_types_are_unchanged() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+
+        world.remove_component::<Velocity>(entity);
+
+        assert!(!world.has_component::<Velocity>(entity));
+        assert_eq!(world.get_component::<Velocity>(entity), None);
+        assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
+    }
+
+    #[test]
+    fn given_missing_component_in_existing_storage_when_remove_component_then_other_entity_is_preserved() {
+        let mut world = World::new();
+        let with_component = world.create_entity();
+        let without_component = world.create_entity();
+        assert!(world.add_component(with_component, Position(10)));
+
+        world.remove_component::<Position>(without_component);
+
+        assert_eq!(
+            world.get_component::<Position>(with_component),
+            Some(&Position(10))
+        );
+        assert_eq!(world.get_component::<Position>(without_component), None);
+    }
+
+    #[test]
+    fn given_entity_with_multiple_components_when_kill_entity_then_all_components_are_absent() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, Position(10)));
+        assert!(world.add_component(entity, Velocity(20)));
+
+        world.kill_entity(entity);
+
+        assert!(!world.has_component::<Position>(entity));
+        assert!(!world.has_component::<Velocity>(entity));
+        assert_eq!(world.get_component::<Position>(entity), None);
+        assert_eq!(world.get_component::<Velocity>(entity), None);
+    }
+
+    #[test]
+    fn given_two_entities_with_components_when_kill_entity_then_other_component_is_preserved() {
+        let mut world = World::new();
+        let killed = world.create_entity();
+        let survivor = world.create_entity();
+        assert!(world.add_component(killed, Position(10)));
+        assert!(world.add_component(survivor, Position(20)));
+
+        world.kill_entity(killed);
+
+        assert_eq!(world.get_component::<Position>(killed), None);
+        assert_eq!(
+            world.get_component::<Position>(survivor),
+            Some(&Position(20))
+        );
+    }
+
+    #[test]
+    fn given_killed_entity_when_add_component_then_return_false_and_drop_component() {
+        let drops = Rc::new(Cell::new(0));
+        let mut world = World::new();
+        let entity = world.create_entity();
+        world.kill_entity(entity);
+
+        assert!(!world.add_component(entity, DropProbe(drops.clone())));
+
+        assert!(!world.has_component::<DropProbe>(entity));
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn given_killed_entity_when_remove_component_then_world_is_unchanged() {
+        let mut world = World::new();
+        let killed = world.create_entity();
+        assert!(world.add_component(killed, Position(10)));
+        world.kill_entity(killed);
+
+        world.remove_component::<Position>(killed);
+
+        assert!(!world.has_component::<Position>(killed));
+        assert_eq!(world.get_component::<Position>(killed), None);
+    }
+
+    #[test]
+    fn given_killed_entity_with_components_when_create_entity_then_recycled_entity_has_no_components() {
+        let mut world = World::new();
+        let old = world.create_entity();
+        assert!(world.add_component(old, Position(10)));
+        world.kill_entity(old);
+
+        let recycled = world.create_entity();
+
+        assert_eq!(old.id, recycled.id);
+        assert!(!world.has_component::<Position>(recycled));
+        assert_eq!(world.get_component::<Position>(recycled), None);
+    }
+
+    #[test]
+    fn given_recycled_entity_with_component_when_remove_component_then_old_handle_preserves_new_component() {
+        let mut world = World::new();
+        let old = world.create_entity();
+        assert!(world.add_component(old, Position(10)));
+        world.kill_entity(old);
+        let recycled = world.create_entity();
+        assert!(world.add_component(recycled, Position(20)));
+
+        world.remove_component::<Position>(old);
+
+        assert_eq!(
+            world.get_component::<Position>(recycled),
+            Some(&Position(20))
+        );
+    }
+
+    #[test]
+    fn given_existing_component_when_remove_component_then_value_is_dropped_immediately() {
+        let drops = Rc::new(Cell::new(0));
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
+
+        world.remove_component::<DropProbe>(entity);
+
+        assert_eq!(drops.get(), 1);
+        drop(world);
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn given_existing_component_when_add_component_then_return_true_and_drop_old_value_exactly_once() {
+        let drops = Rc::new(Cell::new(0));
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
+
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
+
+        assert_eq!(drops.get(), 1);
+        drop(world);
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn given_entity_with_components_when_kill_entity_then_all_values_are_dropped_immediately() {
+        let drops = Rc::new(Cell::new(0));
+        let mut world = World::new();
+        let entity = world.create_entity();
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
+
+        world.kill_entity(entity);
+
+        assert_eq!(drops.get(), 1);
+        drop(world);
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn given_multiple_freed_slots_when_create_entities_then_each_slot_is_recycled_once() {
+        let mut world = World::new();
+        let first = world.create_entity();
+        let second = world.create_entity();
+        let third = world.create_entity();
+        world.kill_entity(first);
+        world.kill_entity(third);
+        world.kill_entity(second);
+
+        let recycled = [
+            world.create_entity(),
+            world.create_entity(),
+            world.create_entity(),
+        ];
+        let recycled_ids: HashSet<_> = recycled.iter().map(|entity| entity.id).collect();
+
+        assert_eq!(recycled_ids, HashSet::from([first.id, second.id, third.id]));
+        assert!(recycled.iter().all(|entity| entity.generation == 1));
+        assert!(recycled.iter().all(|entity| world.is_alive(*entity)));
+        assert_eq!(world.create_entity().id, 3);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "attempt to add with overflow")]
+    fn given_maximum_entity_id_when_create_entity_then_overflow_panics_in_debug_builds() {
+        let mut world = World::new();
+        world.id_counter = u32::MAX;
+
+        let _ = world.create_entity();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "attempt to add with overflow")]
+    fn given_maximum_generation_when_kill_entity_then_overflow_panics_in_debug_builds() {
+        let mut world = World::new();
+        let entity = world.create_entity();
+        world.generation_table[entity.id as usize] = u32::MAX;
+        let last_generation = Entity::new(entity.id, u32::MAX);
+
+        world.kill_entity(last_generation);
     }
 }
