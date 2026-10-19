@@ -6,25 +6,27 @@ use crate::util::AsAny;
 pub struct SparseSet<T> {
     // index = id, output = idx of component storage
     sparse: Vec<usize>,
-    dense: Vec<T>,
+    dense_data: Vec<T>,
+    dense_indices: Vec<usize>,
 }
 
 impl<T> SparseSet<T> {
     pub fn new() -> Self {
         SparseSet {
             sparse: Vec::new(),
-            dense: Vec::new(),
+            dense_data: Vec::new(),
+            dense_indices: Vec::new(),
         }
     }
 
     pub fn get(&self, id: usize) -> Option<&T> {
         let dense_idx = self.sparse.get(id)?;
-        self.dense.get(*dense_idx)
+        self.dense_data.get(*dense_idx)
     }
 
     pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
         let dense_idx = self.sparse.get(id)?;
-        self.dense.get_mut(*dense_idx)
+        self.dense_data.get_mut(*dense_idx)
     }
 
     pub fn set(&mut self, id: usize, component: T) {
@@ -32,7 +34,8 @@ impl<T> SparseSet<T> {
             // idx exists already, no need to resize
             if *mapped_id != usize::MAX {
                 // we write since theres already a dense slot allocated
-                self.dense[*mapped_id] = component;
+                self.dense_data[*mapped_id] = component;
+                self.dense_indices[*mapped_id] = id;
                 return;
             }
         } else {
@@ -42,8 +45,9 @@ impl<T> SparseSet<T> {
         // We know that
         // a) the sparse array supports at least id + 1 elements
         // b) the idx at id is NOT currently mapped
-        self.dense.push(component);
-        self.sparse[id] = self.dense.len() - 1;
+        self.dense_data.push(component);
+        self.dense_indices.push(id);
+        self.sparse[id] = self.dense_data.len() - 1;
     }
 }
 
@@ -70,10 +74,22 @@ impl<T: 'static> ComponentStorage for SparseSet<T> {
         // mark sparse spot as empty
         self.sparse[id] = usize::MAX;
         // remove actual data, replace empty spot with last element in dense array
-        self.dense.swap_remove(dense_idx);
-        // we find the sparse entry for the last dense element and point it towards our repurposed dense spot
-        if let Some(swapped_sparse_idx) = self.sparse.iter().position(|x| *x == self.dense.len()) {
-            self.sparse[swapped_sparse_idx] = dense_idx;
+        self.dense_data.swap_remove(dense_idx);
+        // State now:
+        // 1) Data is removed from storage
+        // 2) Sparse Mapping to removed Data is gone too
+        // 3) Last dense element was moved to id
+        // 4) Sparse entry for previously last element now points to garbage
+        // 5) dense_indices entry for removed data still exists
+        // 6) dense_indices entry for moved element is now wrong
+        // TO FIX:
+        // Step 1) Get sparse idx for moved (previously last) element
+        let sparse_idx = self.dense_indices[self.dense_data.len()];
+        // Step 2) Remove dense_indices entry for deleted data
+        self.dense_indices.swap_remove(dense_idx);
+        // Step 3) Point sparse entry to new position IF there even is still data in the first place
+        if !self.dense_data.is_empty() {
+            self.sparse[sparse_idx] = dense_idx;
         }
     }
 }
@@ -174,7 +190,9 @@ mod test {
     fn given_existing_id_when_remove_then_contains_and_get_report_absent() {
         let mut set = SparseSet::new();
         set.set(0, String::from("removed"));
+        println!("{:?}", set);
         set.remove(0);
+        println!("{:?}", set);
 
         assert!(!set.contains(0));
         assert_eq!(set.get(0), None);
@@ -263,7 +281,7 @@ mod test {
             set.remove(0);
         }
 
-        assert!(set.dense.is_empty());
+        assert!(set.dense_data.is_empty());
     }
 
     #[test]
