@@ -2,7 +2,6 @@ use crate::entity::Entity;
 use crate::sparseset::{ComponentStorage, SparseSet};
 use std::any::TypeId;
 use std::collections::HashMap;
-use crate::util::AsAny;
 
 pub struct World {
     id_counter: u32,
@@ -69,10 +68,10 @@ impl World {
         false
     }
 
-    pub fn add_component<T: 'static>(&mut self, entity: Entity, component: T) {
+    pub fn add_component<T: 'static>(&mut self, entity: Entity, component: T) -> bool {
         // if entity isnt alive we cant add components
         if !self.is_alive(entity) {
-            return;
+            return false;
         }
         // create type id and ensure that a sparse set for that id exists
         let type_id = TypeId::of::<T>();
@@ -83,6 +82,7 @@ impl World {
         // Important: as_mut() to get the &mut dyn ComponentStorage so we dont call as_any_mut on the box
         let set = temp.as_mut().as_any_mut().downcast_mut::<SparseSet<T>>().unwrap();
         set.set(entity.id as usize, component);
+        true
     }
 
     pub fn remove_component<T: 'static>(&mut self, entity: Entity) {
@@ -285,36 +285,36 @@ mod tests {
     }
 
     #[test]
-    fn given_alive_entity_when_add_component_then_component_is_available() {
+    fn given_alive_entity_when_add_component_then_return_true_and_component_is_available() {
         let mut world = World::new();
         let entity = world.create_entity();
 
-        world.add_component(entity, Position(10));
+        assert!(world.add_component(entity, Position(10)));
 
         assert!(world.has_component::<Position>(entity));
         assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
     }
 
     #[test]
-    fn given_entity_with_component_when_add_component_then_value_is_replaced() {
+    fn given_entity_with_component_when_add_component_then_return_true_and_value_is_replaced() {
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, Position(10));
+        assert!(world.add_component(entity, Position(10)));
 
-        world.add_component(entity, Position(20));
+        assert!(world.add_component(entity, Position(20)));
 
         assert_eq!(world.get_component::<Position>(entity), Some(&Position(20)));
     }
 
     #[test]
-    fn given_two_entities_when_add_component_then_same_type_values_are_isolated() {
+    fn given_two_entities_when_add_component_then_return_true_and_same_type_values_are_isolated() {
         let mut world = World::new();
         let first = world.create_entity();
         let second = world.create_entity();
         let without_component = world.create_entity();
 
-        world.add_component(first, Position(10));
-        world.add_component(second, Position(20));
+        assert!(world.add_component(first, Position(10)));
+        assert!(world.add_component(second, Position(20)));
 
         assert_eq!(world.get_component::<Position>(first), Some(&Position(10)));
         assert_eq!(world.get_component::<Position>(second), Some(&Position(20)));
@@ -323,12 +323,12 @@ mod tests {
     }
 
     #[test]
-    fn given_one_entity_when_add_component_then_multiple_types_are_isolated() {
+    fn given_one_entity_when_add_component_then_return_true_and_multiple_types_are_isolated() {
         let mut world = World::new();
         let entity = world.create_entity();
 
-        world.add_component(entity, Position(10));
-        world.add_component(entity, Velocity(20));
+        assert!(world.add_component(entity, Position(10)));
+        assert!(world.add_component(entity, Velocity(20)));
 
         assert_eq!(world.get_component::<Position>(entity), Some(&Position(10)));
         assert_eq!(world.get_component::<Velocity>(entity), Some(&Velocity(20)));
@@ -338,7 +338,7 @@ mod tests {
     fn given_entity_with_component_when_remove_component_then_get_and_has_report_absent() {
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, Position(10));
+        assert!(world.add_component(entity, Position(10)));
 
         world.remove_component::<Position>(entity);
 
@@ -362,7 +362,7 @@ mod tests {
     fn given_missing_component_type_when_remove_component_then_other_types_are_unchanged() {
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, Position(10));
+        assert!(world.add_component(entity, Position(10)));
 
         world.remove_component::<Velocity>(entity);
 
@@ -376,7 +376,7 @@ mod tests {
         let mut world = World::new();
         let with_component = world.create_entity();
         let without_component = world.create_entity();
-        world.add_component(with_component, Position(10));
+        assert!(world.add_component(with_component, Position(10)));
 
         world.remove_component::<Position>(without_component);
 
@@ -391,8 +391,8 @@ mod tests {
     fn given_entity_with_multiple_components_when_kill_entity_then_all_components_are_absent() {
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, Position(10));
-        world.add_component(entity, Velocity(20));
+        assert!(world.add_component(entity, Position(10)));
+        assert!(world.add_component(entity, Velocity(20)));
 
         world.kill_entity(entity);
 
@@ -407,8 +407,8 @@ mod tests {
         let mut world = World::new();
         let killed = world.create_entity();
         let survivor = world.create_entity();
-        world.add_component(killed, Position(10));
-        world.add_component(survivor, Position(20));
+        assert!(world.add_component(killed, Position(10)));
+        assert!(world.add_component(survivor, Position(20)));
 
         world.kill_entity(killed);
 
@@ -420,13 +420,13 @@ mod tests {
     }
 
     #[test]
-    fn given_killed_entity_when_add_component_then_component_is_rejected_and_dropped() {
+    fn given_killed_entity_when_add_component_then_return_false_and_drop_component() {
         let drops = Rc::new(Cell::new(0));
         let mut world = World::new();
         let entity = world.create_entity();
         world.kill_entity(entity);
 
-        world.add_component(entity, DropProbe(drops.clone()));
+        assert!(!world.add_component(entity, DropProbe(drops.clone())));
 
         assert!(!world.has_component::<DropProbe>(entity));
         assert_eq!(drops.get(), 1);
@@ -436,7 +436,7 @@ mod tests {
     fn given_killed_entity_when_remove_component_then_world_is_unchanged() {
         let mut world = World::new();
         let killed = world.create_entity();
-        world.add_component(killed, Position(10));
+        assert!(world.add_component(killed, Position(10)));
         world.kill_entity(killed);
 
         world.remove_component::<Position>(killed);
@@ -449,7 +449,7 @@ mod tests {
     fn given_killed_entity_with_components_when_create_entity_then_recycled_entity_has_no_components() {
         let mut world = World::new();
         let old = world.create_entity();
-        world.add_component(old, Position(10));
+        assert!(world.add_component(old, Position(10)));
         world.kill_entity(old);
 
         let recycled = world.create_entity();
@@ -463,10 +463,10 @@ mod tests {
     fn given_recycled_entity_with_component_when_remove_component_then_old_handle_preserves_new_component() {
         let mut world = World::new();
         let old = world.create_entity();
-        world.add_component(old, Position(10));
+        assert!(world.add_component(old, Position(10)));
         world.kill_entity(old);
         let recycled = world.create_entity();
-        world.add_component(recycled, Position(20));
+        assert!(world.add_component(recycled, Position(20)));
 
         world.remove_component::<Position>(old);
 
@@ -481,7 +481,7 @@ mod tests {
         let drops = Rc::new(Cell::new(0));
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, DropProbe(drops.clone()));
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
 
         world.remove_component::<DropProbe>(entity);
 
@@ -491,13 +491,13 @@ mod tests {
     }
 
     #[test]
-    fn given_existing_component_when_add_component_then_old_value_is_dropped_exactly_once() {
+    fn given_existing_component_when_add_component_then_return_true_and_drop_old_value_exactly_once() {
         let drops = Rc::new(Cell::new(0));
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, DropProbe(drops.clone()));
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
 
-        world.add_component(entity, DropProbe(drops.clone()));
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
 
         assert_eq!(drops.get(), 1);
         drop(world);
@@ -509,7 +509,7 @@ mod tests {
         let drops = Rc::new(Cell::new(0));
         let mut world = World::new();
         let entity = world.create_entity();
-        world.add_component(entity, DropProbe(drops.clone()));
+        assert!(world.add_component(entity, DropProbe(drops.clone())));
 
         world.kill_entity(entity);
 
