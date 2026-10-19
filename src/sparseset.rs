@@ -87,8 +87,8 @@ impl<T: 'static> ComponentStorage for SparseSet<T> {
         let sparse_idx = self.dense_indices[self.dense_data.len()];
         // Step 2) Remove dense_indices entry for deleted data
         self.dense_indices.swap_remove(dense_idx);
-        // Step 3) Point sparse entry to new position IF there even is still data in the first place
-        if !self.dense_data.is_empty() {
+        // Step 3) Point sparse entry to new position IF the removed element was NOT the last one
+        if dense_idx != self.dense_data.len() {
             self.sparse[sparse_idx] = dense_idx;
         }
     }
@@ -190,9 +190,7 @@ mod test {
     fn given_existing_id_when_remove_then_contains_and_get_report_absent() {
         let mut set = SparseSet::new();
         set.set(0, String::from("removed"));
-        println!("{:?}", set);
         set.remove(0);
-        println!("{:?}", set);
 
         assert!(!set.contains(0));
         assert_eq!(set.get(0), None);
@@ -333,5 +331,24 @@ mod test {
                 );
             }
         }
+    }
+
+    #[test]
+    fn given_two_components_when_remove_last_then_component_is_absent_and_reinsertable() {
+        let mut set = SparseSet::new();
+        set.set(0, String::from("first"));
+        set.set(1, String::from("last"));
+
+        set.remove(1);
+
+        assert!(!set.contains(1));
+        assert_eq!(set.get(1), None);
+        assert_eq!(set.get(0).map(String::as_str), Some("first"));
+
+        set.set(1, String::from("replacement"));
+
+        assert!(set.contains(1));
+        assert_eq!(set.get(1).map(String::as_str), Some("replacement"));
+        assert_eq!(set.get(0).map(String::as_str), Some("first"));
     }
 }
